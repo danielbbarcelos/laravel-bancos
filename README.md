@@ -1,5 +1,8 @@
 # laravel-bancos
 
+[![CI](https://github.com/danielbbarcelos/laravel-bancos/actions/workflows/ci.yml/badge.svg)](https://github.com/danielbbarcelos/laravel-bancos/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Integração com bancos brasileiros (Pix, e futuramente boleto, pagamentos e conciliação) sob um **contrato único**, com um **driver por banco**. Você programa contra a interface canônica; cada driver faz o de-para para a API específica do banco.
 
 ```php
