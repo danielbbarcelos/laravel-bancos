@@ -33,9 +33,11 @@ class BancoApiException extends BancoException
         $corpo = is_array($corpo) ? $corpo : [];
 
         // Formato de erro do padrão BACEN (RFC 7807): title/detail/violacoes.
-        // BACEN (RFC 7807): detail/title; OAuth/boleto Sicredi: error_description/message.
+        // BACEN (RFC 7807): detail/title; OAuth/boleto Sicredi: error_description/
+        // message/mensagem (a API de Cobrança usa "mensagem" em PT).
         $detalhe = $corpo['detail']
             ?? $corpo['title']
+            ?? $corpo['mensagem']
             ?? $corpo['message']
             ?? $corpo['error_description']
             ?? $resposta->reason();

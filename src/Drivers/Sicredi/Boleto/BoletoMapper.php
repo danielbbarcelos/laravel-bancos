@@ -6,8 +6,10 @@ namespace DanielBBarcelos\Bancos\Drivers\Sicredi\Boleto;
 
 use DanielBBarcelos\Bancos\Data\Boleto\Boleto;
 use DanielBBarcelos\Bancos\Data\Boleto\BoletoEmitido;
+use DanielBBarcelos\Bancos\Data\Boleto\ContratoWebhook;
 use DanielBBarcelos\Bancos\Data\Boleto\Encargo;
 use DanielBBarcelos\Bancos\Data\Boleto\Pessoa;
+use DanielBBarcelos\Bancos\Data\Boleto\RecebimentoBoleto;
 use DanielBBarcelos\Bancos\Data\Shared\Valor;
 
 /**
@@ -91,6 +93,47 @@ class BoletoMapper
                 ? Valor::reais((string) $resposta['valorNominal'])
                 : null,
             bruto: $resposta,
+        );
+    }
+
+    /**
+     * Resposta de criar/consultar contrato de webhook -> DTO canônico.
+     *
+     * @param  array<string, mixed>  $resposta
+     */
+    public function contratoParaDominio(array $resposta): ContratoWebhook
+    {
+        return new ContratoWebhook(
+            idContrato: isset($resposta['idContrato']) ? (string) $resposta['idContrato'] : null,
+            url: (string) ($resposta['url'] ?? ''),
+            eventos: $resposta['eventos'] ?? [],
+            status: $resposta['contratoStatus'] ?? ($resposta['status'] ?? null),
+            bruto: $resposta,
+        );
+    }
+
+    /**
+     * Payload da notificação de webhook de boleto -> DTO canônico.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    public function notificacaoParaDominio(array $payload): RecebimentoBoleto
+    {
+        $valor = static fn (string $chave): ?Valor => isset($payload[$chave]) && $payload[$chave] !== ''
+            ? Valor::reais((string) $payload[$chave])
+            : null;
+
+        return new RecebimentoBoleto(
+            nossoNumero: (string) ($payload['nossoNumero'] ?? ''),
+            movimento: (string) ($payload['movimento'] ?? ''),
+            valorPago: $valor('valorLiquidacao'),
+            valorJuros: $valor('valorJuros'),
+            valorMulta: $valor('valorMulta'),
+            valorDesconto: $valor('valorDesconto'),
+            beneficiario: $payload['beneficiario'] ?? null,
+            agencia: $payload['agencia'] ?? null,
+            posto: $payload['posto'] ?? null,
+            bruto: $payload,
         );
     }
 

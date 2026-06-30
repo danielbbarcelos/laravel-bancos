@@ -96,7 +96,10 @@ class SicrediBanco implements Banco
         return $this->boleto ??= new SicrediBoletoGateway(
             new SicrediBoletoConnector($config + ['timeout' => $this->config['timeout'] ?? 30], $this->nome),
             new BoletoMapper(),
-            (string) ($config['codigo_beneficiario'] ?? ''),
+            codigoBeneficiario: (string) ($config['codigo_beneficiario'] ?? ''),
+            banco: $this->nome,
+            cooperativa: (string) ($config['cooperativa'] ?? ''),
+            posto: (string) ($config['posto'] ?? ''),
         );
     }
 }

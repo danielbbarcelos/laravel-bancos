@@ -185,10 +185,38 @@ $boleto->nossoNumero;
 $boleto->qrCode;   // preenchido quando híbrido
 
 Bancos::driver('sicredi')->boleto()->consultar($nossoNumero);  // BoletoEmitido (situação, etc.)
+$pdfBytes = Bancos::driver('sicredi')->boleto()->pdf($cobranca->linhaDigitavel); // PDF (bytes)
 Bancos::driver('sicredi')->boleto()->baixar($nossoNumero);     // cancela/baixa
 ```
 
 > [!note] Cheque o suporte antes: `Bancos::banco()->suporta(Recurso::Boleto)`.
+
+### Webhook de boleto (liquidação/estorno)
+
+Diferente do webhook Pix, o boleto usa um **contrato de webhook**:
+
+```php
+$boleto = Bancos::driver('sicredi')->boleto();
+$boleto->registrarWebhook('https://meuapp.com/webhooks/boleto', ['LIQUIDACAO']);
+$boleto->consultarWebhook();          // ?ContratoWebhook
+$boleto->alterarWebhook($idContrato, 'https://nova-url', ['LIQUIDACAO']);
+
+// No seu controller que recebe a notificação do Sicredi:
+$recebimento = $boleto->processarNotificacao($request->all()); // dispara Events\BoletoLiquidado
+$recebimento->pago();       // movimento LIQUIDACAO_*
+$recebimento->estornado();  // movimento ESTORNO_*
+$recebimento->valorPago;    // Valor
+```
+
+```php
+use DanielBBarcelos\Bancos\Events\BoletoLiquidado;
+
+class DarBaixaNoBoleto {
+    public function handle(BoletoLiquidado $e): void {
+        $e->recebimento->nossoNumero; // localizar e dar baixa/conciliar
+    }
+}
+```
 
 ## Webhook Pix (confirmação de recebimento)
 
@@ -247,7 +275,7 @@ class DarBaixaNoPedido
 |--------|-------|
 | `Contracts\*` | O contrato canônico, independente de banco (`Banco`, `PixGateway`, `BoletoGateway`). |
 | `Data\*` | DTOs `readonly` canônicos (`Valor`, `Pessoa`, `CobrancaImediata`, `CobrancaComVencimento`, `Cobranca`, `Devolucao`, `Webhook`, `Recebimento`). |
-| `Events\*` | Eventos de domínio (`PixRecebido`), despachados ao processar webhooks. |
+| `Events\*` | Eventos de domínio (`PixRecebido`, `BoletoLiquidado`), despachados ao processar webhooks. |
 | `BancoManager` | Resolve/cacheia drivers a partir da config. Use `extend()` para registrar bancos próprios. |
 | `Drivers\Bacen\*` | Núcleo reutilizável do padrão BACEN: `BacenPixGateway` + Mappers + `ClienteHttpBacen` (mTLS, cache de token). |
 | `Drivers\<Banco>` | Só o que muda por banco: **autenticação** (token) e **rotas/versões**. Reaproveita o núcleo BACEN. |
@@ -315,6 +343,8 @@ Os testes usam `Http::fake()` — não tocam nenhuma API real.
   (timeout/conexão e HTTP 5xx); 4xx **não** é re-tentado (vira `BancoApiException` na hora).
   Configurável por banco: `tentativas` (default 3) e `retry_intervalo_ms` (default 200).
   Use `txid` nos PUT para idempotência.
+- **Retry em 401**: se o PSP responder `401` (token expirado no servidor antes do TTL local),
+  o token cacheado é descartado e a chamada é refeita **uma vez** automaticamente.
 - **Validação de `txid`**: ao criar cobrança com `txid` (imediata ou `cobv`), o formato BACEN
   (26–35 alfanuméricos) é validado antes de chamar a API — falha cedo com mensagem clara, sem
   gastar um round-trip para receber um `400`.

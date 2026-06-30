@@ -64,8 +64,14 @@ Só crie mappers próprios se o banco divergir do payload BACEN; senão, reutili
 - `SicrediBoletoConnector extends ClienteHttpBacen` só para reusar cache de token, retry e erros;
   sobrescreve `emitirToken()` (password grant) e `cliente()` (headers). Token expira em 300s
   (re-emite por password; refresh_token não usado — melhoria futura).
-- `BoletoGateway`: `emitir`/`consultar`/`baixar`. DTOs em `Data\Boleto\*`. Config no bloco
-  `boleto` de `bancos.drivers.sicredi`; `SicrediBanco::boleto()` lança `BancoException` se ausente.
+- `BoletoGateway`: `emitir`/`consultar`/`pdf`/`baixar` + webhook por contrato
+  (`registrarWebhook`/`consultarWebhook`/`alterarWebhook`/`processarNotificacao` → evento
+  `Events\BoletoLiquidado`). DTOs em `Data\Boleto\*`. Config no bloco `boleto` de
+  `bancos.drivers.sicredi`; `SicrediBanco::boleto()` lança `BancoException` se ausente.
+- PDF via `ClienteHttpBacen::getRaw()` (Accept custom). Token de boleto é curto (~10 min) →
+  `enviar()` re-tenta uma vez em 401 (vale p/ Pix também). Erro lido também de `mensagem` (PT).
+- Endpoints de webhook de boleto seguem o `sicredi_client.py` real do meanify
+  (`/cobranca/boleto/v1/webhook/contrato[s]`), não o markdown (que diverge).
 
 ## Robustez (ClienteHttpBacen)
 

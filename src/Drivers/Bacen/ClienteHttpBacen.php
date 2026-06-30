@@ -84,26 +84,47 @@ abstract class ClienteHttpBacen implements BacenConnector
     }
 
     /**
-     * Executa a requisição e normaliza o resultado. Com retry ativo, o cliente
-     * Http lança RequestException ao esgotar/recusar tentativas; capturamos para
-     * sempre passar a resposta (4xx/5xx) pelo garantirOk → BancoApiException.
-     * ConnectionException (sem resposta) propaga como falha de rede.
+     * GET que retorna a resposta crua com um Accept específico (ex.: baixar um
+     * PDF). Use ->body() para os bytes. Reaproveita auth/retry/erro.
+     */
+    public function getRaw(string $caminho, array $query = [], string $accept = '*/*'): Response
+    {
+        return $this->enviar(fn () => $this->autenticado()->accept($accept)->get($caminho, $query));
+    }
+
+    /**
+     * Executa a requisição e normaliza o resultado. Se o PSP responder 401 (token
+     * expirado no servidor antes do TTL local), descarta o token cacheado e tenta
+     * de novo UMA vez. Com retry ativo, o cliente Http lança RequestException ao
+     * esgotar/recusar tentativas; capturamos para sempre passar a resposta pelo
+     * garantirOk → BancoApiException. ConnectionException (sem resposta) propaga.
      *
      * @param  callable(): Response  $callback
      */
     protected function enviar(callable $callback): Response
     {
+        $resposta = $this->tentar($callback);
+
+        if ($resposta->status() === 401) {
+            Cache::forget($this->chaveCacheToken());
+            $resposta = $this->tentar($callback);
+        }
+
+        return $this->garantirOk($resposta);
+    }
+
+    /** @param callable(): Response $callback */
+    protected function tentar(callable $callback): Response
+    {
         try {
-            $resposta = $callback();
+            return $callback();
         } catch (RequestException $e) {
             if ($e->response === null) {
                 throw $e;
             }
 
-            $resposta = $e->response;
+            return $e->response;
         }
-
-        return $this->garantirOk($resposta);
     }
 
     /**

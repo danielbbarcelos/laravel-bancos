@@ -56,6 +56,21 @@ it('re-tenta em erro 5xx transitório e tem sucesso', function () {
     Http::assertSentCount(3); // 1 token + 2 tentativas (503, 200)
 });
 
+it('re-tenta uma vez em 401, limpando o token e reemitindo', function () {
+    Http::fake([
+        '*/oauth/token' => Http::response(['access_token' => 'tok', 'expires_in' => 3599]),
+        '*/api/v3/cob/*' => Http::sequence()
+            ->push(['title' => 'token expirado'], 401)   // 1ª: token velho
+            ->push(['txid' => 'A', 'status' => 'ATIVA', 'valor' => ['original' => '1.00']], 200),
+    ]);
+
+    $cobranca = Bancos::pix()->consultarCobranca('A');
+
+    expect($cobranca->txid)->toBe('A');
+    // token + cob(401) + token(reemitido) + cob(200)
+    Http::assertSentCount(4);
+});
+
 it('NÃO re-tenta em erro 4xx (vira BancoApiException direto)', function () {
     Http::fake([
         '*/api/v3/cob/*' => Http::sequence()

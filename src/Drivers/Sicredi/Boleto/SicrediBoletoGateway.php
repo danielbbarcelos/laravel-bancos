@@ -7,19 +7,29 @@ namespace DanielBBarcelos\Bancos\Drivers\Sicredi\Boleto;
 use DanielBBarcelos\Bancos\Contracts\BoletoGateway;
 use DanielBBarcelos\Bancos\Data\Boleto\Boleto;
 use DanielBBarcelos\Bancos\Data\Boleto\BoletoEmitido;
+use DanielBBarcelos\Bancos\Data\Boleto\ContratoWebhook;
+use DanielBBarcelos\Bancos\Data\Boleto\RecebimentoBoleto;
+use DanielBBarcelos\Bancos\Events\BoletoLiquidado;
 
 /**
  * Boleto registrado do Sicredi (API de Cobrança v1). As rotas e o de-para são
- * específicos desta API; o codigoBeneficiario vem da config do banco.
+ * específicos desta API; cooperativa/posto/codigoBeneficiario vêm da config.
  */
 class SicrediBoletoGateway implements BoletoGateway
 {
     protected const ROTA = '/cobranca/boleto/v1/boletos';
 
+    protected const ROTA_WEBHOOK = '/cobranca/boleto/v1/webhook/contrato';
+
+    protected const ROTA_WEBHOOKS = '/cobranca/boleto/v1/webhook/contratos';
+
     public function __construct(
         protected SicrediBoletoConnector $http,
         protected BoletoMapper $mapper,
         protected string $codigoBeneficiario,
+        protected string $banco = 'sicredi',
+        protected string $cooperativa = '',
+        protected string $posto = '',
     ) {
     }
 
@@ -40,8 +50,80 @@ class SicrediBoletoGateway implements BoletoGateway
         return $this->mapper->emitidoParaDominio($resposta->json());
     }
 
+    public function pdf(string $linhaDigitavel): string
+    {
+        $resposta = $this->http->getRaw(
+            self::ROTA.'/pdf',
+            ['linhaDigitavel' => $linhaDigitavel],
+            'application/pdf',
+        );
+
+        return $resposta->body();
+    }
+
     public function baixar(string $nossoNumero): void
     {
         $this->http->patch(self::ROTA."/{$nossoNumero}/baixa", []);
+    }
+
+    public function registrarWebhook(string $url, array $eventos = ['LIQUIDACAO']): ContratoWebhook
+    {
+        $resposta = $this->http->post(self::ROTA_WEBHOOK.'/', $this->payloadContrato($url, $eventos));
+
+        return $this->mapper->contratoParaDominio($resposta->json());
+    }
+
+    public function consultarWebhook(): ?ContratoWebhook
+    {
+        $resposta = $this->http->get(self::ROTA_WEBHOOKS.'/', [
+            'cooperativa' => $this->cooperativa,
+            'posto' => $this->posto,
+            'beneficiario' => $this->codigoBeneficiario,
+        ]);
+
+        $dados = $resposta->json();
+
+        // A API pode devolver um único contrato ou uma lista; normalizamos.
+        if (isset($dados[0])) {
+            $dados = $dados[0];
+        }
+
+        return empty($dados) ? null : $this->mapper->contratoParaDominio($dados);
+    }
+
+    public function alterarWebhook(string $idContrato, string $url, array $eventos = ['LIQUIDACAO']): ContratoWebhook
+    {
+        $resposta = $this->http->put(
+            self::ROTA_WEBHOOK."/{$idContrato}",
+            $this->payloadContrato($url, $eventos),
+        );
+
+        return $this->mapper->contratoParaDominio($resposta->json());
+    }
+
+    public function processarNotificacao(array $payload): RecebimentoBoleto
+    {
+        $recebimento = $this->mapper->notificacaoParaDominio($payload);
+
+        event(new BoletoLiquidado($this->banco, $recebimento));
+
+        return $recebimento;
+    }
+
+    /**
+     * @param  list<string>  $eventos
+     * @return array<string, mixed>
+     */
+    protected function payloadContrato(string $url, array $eventos): array
+    {
+        return [
+            'cooperativa' => $this->cooperativa,
+            'posto' => $this->posto,
+            'codBeneficiario' => $this->codigoBeneficiario,
+            'eventos' => $eventos,
+            'url' => $url,
+            'urlStatus' => 'ATIVO',
+            'contratoStatus' => 'ATIVO',
+        ];
     }
 }

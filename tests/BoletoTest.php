@@ -7,10 +7,14 @@ use DanielBBarcelos\Bancos\Data\Boleto\BoletoEmitido;
 use DanielBBarcelos\Bancos\Data\Boleto\Desconto;
 use DanielBBarcelos\Bancos\Data\Boleto\Encargo;
 use DanielBBarcelos\Bancos\Data\Boleto\Pessoa;
+use DanielBBarcelos\Bancos\Data\Boleto\RecebimentoBoleto;
 use DanielBBarcelos\Bancos\Data\Shared\Valor;
 use DanielBBarcelos\Bancos\Enums\TipoCobrancaBoleto;
 use DanielBBarcelos\Bancos\Enums\TipoValor;
+use DanielBBarcelos\Bancos\Events\BoletoLiquidado;
+use DanielBBarcelos\Bancos\Exceptions\BancoApiException;
 use DanielBBarcelos\Bancos\Facades\Bancos;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 
 beforeEach(function () {
@@ -134,4 +138,95 @@ it('baixa um boleto via PATCH', function () {
 
     Http::assertSent(fn ($r) => $r->method() === 'PATCH'
         && str_ends_with($r->url(), '/cobranca/boleto/v1/boletos/251006142/baixa'));
+});
+
+it('baixa o PDF do boleto com Accept application/pdf', function () {
+    Http::fake([
+        '*/cobranca/boleto/v1/boletos/pdf*' => Http::response('%PDF-1.7 conteudo', 200, ['Content-Type' => 'application/pdf']),
+    ]);
+
+    $bytes = Bancos::driver('sicredi')->boleto()->pdf('74891123456000000001600000000131876500001500');
+
+    expect($bytes)->toStartWith('%PDF');
+
+    Http::assertSent(fn ($r) => $r->method() === 'GET'
+        && str_contains($r->url(), '/cobranca/boleto/v1/boletos/pdf')
+        && str_contains($r->url(), 'linhaDigitavel=')
+        && $r->hasHeader('Accept', 'application/pdf'));
+});
+
+it('traduz erro do boleto lido da chave "mensagem"', function () {
+    Http::fake([
+        '*/cobranca/boleto/v1/boletos' => Http::response(['mensagem' => 'Instrução inválida: título enviado para CAIXA'], 422),
+    ]);
+
+    try {
+        Bancos::driver('sicredi')->boleto()->emitir(new Boleto(
+            pagador: new Pessoa('X', '00012312312', '90000000', 'POA', 'RS'),
+            valor: Valor::reais('1.00'),
+            vencimento: '2026-07-30',
+            seuNumero: 'X',
+        ));
+        $this->fail('Esperava BancoApiException.');
+    } catch (BancoApiException $e) {
+        expect($e->statusHttp)->toBe(422)
+            ->and($e->getMessage())->toContain('Instrução inválida');
+    }
+});
+
+// --- Webhook de boleto (contrato) ---
+
+it('registra um contrato de webhook de boleto', function () {
+    Http::fake([
+        '*/cobranca/boleto/v1/webhook/contrato/' => Http::response([
+            'idContrato' => 'CT-1', 'url' => 'https://meuapp.com/webhooks/boleto',
+            'eventos' => ['LIQUIDACAO'], 'contratoStatus' => 'ATIVO',
+        ]),
+    ]);
+
+    $contrato = Bancos::driver('sicredi')->boleto()->registrarWebhook('https://meuapp.com/webhooks/boleto');
+
+    expect($contrato->idContrato)->toBe('CT-1')->and($contrato->status)->toBe('ATIVO');
+
+    Http::assertSent(function ($r) {
+        if (! str_contains($r->url(), '/webhook/contrato/')) {
+            return false;
+        }
+        $b = $r->data();
+
+        return $r->method() === 'POST'
+            && $b['url'] === 'https://meuapp.com/webhooks/boleto'
+            && $b['codBeneficiario'] === '12345'
+            && $b['cooperativa'] === '0512'
+            && $b['eventos'] === ['LIQUIDACAO'];
+    });
+});
+
+it('processa notificação de liquidação e dispara BoletoLiquidado', function () {
+    Event::fake([BoletoLiquidado::class]);
+
+    $payload = [
+        'agencia' => '0512', 'posto' => '03', 'beneficiario' => '12345',
+        'nossoNumero' => '251006142', 'movimento' => 'LIQUIDACAO_PIX',
+        'valorLiquidacao' => '150.00', 'valorJuros' => '0.00',
+    ];
+
+    $rec = Bancos::driver('sicredi')->boleto()->processarNotificacao($payload);
+
+    expect($rec)->toBeInstanceOf(RecebimentoBoleto::class)
+        ->and($rec->nossoNumero)->toBe('251006142')
+        ->and($rec->pago())->toBeTrue()
+        ->and($rec->estornado())->toBeFalse()
+        ->and($rec->valorPago->paraApi())->toBe('150.00');
+
+    Event::assertDispatched(BoletoLiquidado::class, fn ($e) => $e->banco === 'sicredi'
+        && $e->recebimento->nossoNumero === '251006142');
+});
+
+it('reconhece estorno na notificação', function () {
+    $rec = Bancos::driver('sicredi')->boleto()->processarNotificacao([
+        'nossoNumero' => '1', 'movimento' => 'ESTORNO_LIQUIDACAO_REDE', 'valorLiquidacao' => '10.00',
+    ]);
+
+    expect($rec->estornado())->toBeTrue()->and($rec->pago())->toBeFalse();
 });
