@@ -3,6 +3,8 @@ composer.lock
 .phpunit.cache/
 .phpunit.result.cache
 
-# credenciais locais de teste (nunca commitar)
-/scripts/sicredi-sandbox.env
+# credenciais locais de teste (nunca commitar) — mantém os *.env.example
+/scripts/*.env
 *.pdf
+*.cer
+*.key
