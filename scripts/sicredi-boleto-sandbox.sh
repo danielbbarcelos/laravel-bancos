@@ -65,13 +65,59 @@ ask COD_BENEF    "codigoBeneficiario (5 díg)"
 info "Base: $SICREDI_BASE  | cooperativa $COOPERATIVA posto $POSTO benef $COD_BENEF"
 
 # ----------------------------------------------------------------------------
+# Detecção de ambiente + guard de produção
+# ----------------------------------------------------------------------------
+# Sandbox = base termina em /sb (com ou sem barra); qualquer outra = PRODUÇÃO.
+if [[ "$SICREDI_BASE" =~ /sb/?$ ]]; then
+  EH_PRODUCAO=0
+else
+  EH_PRODUCAO=1
+  cat <<BANNER
+${C_ERR}
+  ############################################################
+  #                                                          #
+  #   ⚠  ATENÇÃO: AMBIENTE DE  P R O D U Ç Ã O  ⚠            #
+  #                                                          #
+  #   Operações de gravação criam/cancelam BOLETOS REAIS     #
+  #   (cobranças válidas, registradas no CIP). NÃO é teste.  #
+  #                                                          #
+  ############################################################
+${C_RST}
+BANNER
+fi
+
+# Exige confirmação digitada antes de qualquer operação que grave/baixe boleto
+# em produção. Em sandbox, passa direto. Retorna !=0 se o usuário não confirmar.
+confirmar_producao() {
+  [[ "$EH_PRODUCAO" == "1" ]] || return 0
+  local acao="${1:-esta operação}" resp
+  err "► ${acao^^} em PRODUÇÃO — isso tem efeito REAL e irreversível."
+  read -rp "Para confirmar, digite PRODUCAO (maiúsculas): " resp
+  if [[ "$resp" == "PRODUCAO" ]]; then
+    return 0
+  fi
+  err "✗ Cancelado (confirmação não conferida)."
+  return 1
+}
+
+# ----------------------------------------------------------------------------
 # Estado da sessão
 # ----------------------------------------------------------------------------
 TOKEN=""
 NOSSO=""
 LINHA=""
 RESP="/tmp/sicredi_resp.$$"
+LOG="$SCRIPT_DIR/sicredi-boleto-sandbox.log"
 trap 'rm -f "$RESP"' EXIT
+
+# Registra toda a sessão (stdout+stderr) também em $LOG, sem atrapalhar os
+# prompts interativos — assim, mesmo sem scrollback no terminal, você pode
+# revisar os passos depois com: less scripts/sicredi-boleto-sandbox.log
+exec > >(tee -a "$LOG") 2>&1
+info "Sessão registrada em: $LOG"
+
+# Pausa até Enter (para ler a saída antes de seguir/redesenhar).
+pausa() { echo; read -rp "${C_DIM}— Enter para continuar —${C_RST} " _; }
 
 # ----------------------------------------------------------------------------
 # Autenticação
@@ -128,6 +174,7 @@ _api_call() {
 # Operações de boleto
 # ----------------------------------------------------------------------------
 cadastrar() {
+  confirmar_producao "cadastrar boleto" || return 1
   local valor venc nome doc
   read -rp "Valor (R\$) [1.00]: " valor;      valor="${valor:-1.00}"
   read -rp "Vencimento YYYY-MM-DD [$(date -d '+60 days' +%Y-%m-%d)]: " venc
@@ -135,7 +182,7 @@ cadastrar() {
   read -rp "Nome do pagador [Fulano de Teste]: " nome; nome="${nome:-Fulano de Teste}"
   read -rp "Documento do pagador (CPF/CNPJ) [11144477735]: " doc; doc="${doc:-11144477735}"
 
-  local seu="TST$(date +%s)"
+  local ts; ts=$(date +%s); local seu="T${ts: -9}"   # seuNumero: máx. 10 caracteres (regra Sicredi)
   local tipo_pessoa="PESSOA_FISICA"
   [[ "${#doc}" -gt 11 ]] && tipo_pessoa="PESSOA_JURIDICA"
 
@@ -182,17 +229,19 @@ pdf() {
     -H "x-api-key: $API_KEY" -H "Authorization: Bearer $TOKEN" \
     -H "cooperativa: $COOPERATIVA" -H "posto: $POSTO" -H "codigoBeneficiario: $COD_BENEF" \
     -H "Accept: application/pdf")
-  if [[ "$status" == "200" ]]; then ok "✓ PDF salvo em $out ($(file -b "$out"))"; else err "✗ HTTP $status"; cat "$out"; rm -f "$out"; fi
+  if [[ "$status" =~ ^2 ]]; then ok "✓ PDF salvo em $out (HTTP $status, $(file -b "$out"))"; else err "✗ HTTP $status"; cat "$out"; rm -f "$out"; fi
 }
 
 baixar() {
   local nn="${1:-$NOSSO}"
   [[ -z "$nn" ]] && read -rp "nossoNumero: " nn
+  confirmar_producao "baixar/cancelar o boleto $nn" || return 1
   info "→ PATCH /cobranca/boleto/v1/boletos/$nn/baixa"
   api PATCH "/cobranca/boleto/v1/boletos/$nn/baixa" "{}"
 }
 
 webhook_criar() {
+  confirmar_producao "registrar contrato de webhook" || return 1
   local url
   read -rp "URL do webhook (https): " url
   local payload
@@ -208,7 +257,12 @@ webhook_consultar() {
 }
 
 fluxo_completo() {
-  autenticar && cadastrar && { [[ -n "$NOSSO" ]] && consultar "$NOSSO" && pdf && baixar "$NOSSO"; }
+  autenticar || return; pausa
+  cadastrar || return
+  [[ -z "$NOSSO" ]] && return
+  pausa; consultar "$NOSSO"
+  pausa; pdf
+  pausa; baixar "$NOSSO"
 }
 
 # ----------------------------------------------------------------------------
@@ -227,6 +281,7 @@ ${C_INFO}=== Sicredi Boleto — Sandbox ===${C_RST}
   7) Webhook: consultar contratos
   9) Fluxo completo (1→2→3→4→5)
   0) Sair
+  ambiente: $([[ "$EH_PRODUCAO" == "1" ]] && echo "${C_ERR}PRODUÇÃO${C_RST}" || echo "${C_OK}sandbox${C_RST}")
 ${C_DIM}  token: $([[ -n "$TOKEN" ]] && echo presente || echo ausente) | nossoNumero: ${NOSSO:-—}${C_RST}
 MENU
   read -rp "opção> " opt
@@ -242,6 +297,7 @@ MENU
     0) exit 0 ;;
     *) err "opção inválida" ;;
   esac
+  pausa   # deixa a saída visível antes de o menu ser redesenhado
 }
 
 while true; do menu; done
