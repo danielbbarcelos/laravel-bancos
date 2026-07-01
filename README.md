@@ -160,6 +160,10 @@ $devolucao = Bancos::pix()->consultarDevolucao($endToEndId, $idDevolucao);
 
 ## Boleto registrado
 
+> 📖 **Guia de integração completo** (multi-tenant com credenciais em runtime, emissão,
+> PDF, alteração, listagem, webhook, tratamento de erros e exemplo Service+Controller):
+> [`docs/README.md`](docs/README.md).
+
 A API de boleto do Sicredi é um produto **separado** do Pix (outra base URL, OAuth2
 `grant_type=password` + `x-api-key`, sem mTLS). Configure o bloco `boleto` em
 `config/bancos.php` e use:
