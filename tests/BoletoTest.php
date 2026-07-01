@@ -14,6 +14,7 @@ use DanielBBarcelos\Bancos\Enums\TipoValor;
 use DanielBBarcelos\Bancos\Events\BoletoLiquidado;
 use DanielBBarcelos\Bancos\Exceptions\BancoApiException;
 use DanielBBarcelos\Bancos\Facades\Bancos;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 
@@ -101,6 +102,46 @@ it('autentica com grant_type=password no endpoint da API de Cobrança', function
         && $r['grant_type'] === 'password'
         && $r['scope'] === 'cobranca'
         && $r->hasHeader('context', 'COBRANCA'));
+});
+
+it('NÃO compartilha token de boleto entre tenants com x_api_key diferente', function () {
+    Cache::flush();
+    Http::fake([
+        '*/auth/openapi/token' => Http::response(['access_token' => 'tok', 'expires_in' => 300]),
+        '*/cobranca/boleto/v1/boletos*' => Http::response(['nossoNumero' => '1']),
+    ]);
+
+    $tenant = fn (string $key) => Bancos::build('sicredi', ['boleto' => [
+        'x_api_key' => $key, 'username' => 'u', 'password' => 'p',
+        'cooperativa' => '6789', 'posto' => '03', 'codigo_beneficiario' => '12345',
+        'base_url' => 'https://api-parceiro.sicredi.com.br/sb',
+    ]]);
+
+    $tenant('key-A')->boleto()->consultar('1');
+    $tenant('key-B')->boleto()->consultar('1');
+
+    // 2 tokens (um por x_api_key) + 2 consultas = sem reaproveitamento indevido.
+    Http::assertSentCount(4);
+});
+
+it('reaproveita o token de boleto para o mesmo x_api_key', function () {
+    Cache::flush();
+    Http::fake([
+        '*/auth/openapi/token' => Http::response(['access_token' => 'tok', 'expires_in' => 300]),
+        '*/cobranca/boleto/v1/boletos*' => Http::response(['nossoNumero' => '1']),
+    ]);
+
+    $cfg = ['boleto' => [
+        'x_api_key' => 'key-A', 'username' => 'u', 'password' => 'p',
+        'cooperativa' => '6789', 'posto' => '03', 'codigo_beneficiario' => '12345',
+        'base_url' => 'https://api-parceiro.sicredi.com.br/sb',
+    ]];
+
+    Bancos::build('sicredi', $cfg)->boleto()->consultar('1');
+    Bancos::build('sicredi', $cfg)->boleto()->consultar('1');
+
+    // 1 token (cacheado por x_api_key) + 2 consultas.
+    Http::assertSentCount(3);
 });
 
 it('consulta um boleto pelo nossoNumero', function () {

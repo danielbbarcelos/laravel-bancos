@@ -275,8 +275,14 @@ abstract class ClienteHttpBacen implements BacenConnector
      */
     protected function chaveCacheToken(): string
     {
+        // Isola o cache de token por credencial. No Pix a credencial é client_id;
+        // no boleto (API de Cobrança) é x_api_key — incluí-lo evita que tenants
+        // sem 'cache_key' explícito compartilhem o mesmo token. Ainda assim,
+        // multi-tenant deve informar 'cache_key' para isolamento determinístico.
+        $credencial = $this->config['client_id'] ?? $this->config['x_api_key'] ?? '';
+
         $escopo = $this->config['cache_key']
-            ?? sha1($this->nome.'|'.($this->config['client_id'] ?? '').'|'.($this->config['base_url'] ?? ''));
+            ?? sha1($this->nome.'|'.$credencial.'|'.($this->config['base_url'] ?? ''));
 
         return "bancos:token:{$escopo}";
     }

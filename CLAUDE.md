@@ -95,8 +95,10 @@ Só crie mappers próprios se o banco divergir do payload BACEN; senão, reutili
   credenciais de runtime, mesclando sobre os defaults do bloco do config. **Não** cacheia
   por nome. `driver()`/`banco()` (modo `.env`) continuam para single-tenant.
 - **Cache de token isolado por credencial**: `ClienteHttpBacen::chaveCacheToken()` deriva a
-  chave de `cache_key` (se informado) ou de `sha1(driver|client_id|base_url)`. Nunca volte à
-  chave fixa por nome — isso vazaria token entre tenants.
+  chave de `cache_key` (se informado) ou de `sha1(driver|credencial|base_url)`, onde
+  `credencial = client_id ?? x_api_key` (Pix usa client_id; boleto usa x_api_key). Nunca
+  volte à chave fixa por nome — isso vazaria token entre tenants. Multi-tenant deve informar
+  `cache_key` explícito.
 - **Certificado**: `certificado`/`chave_privada` aceitam caminho OU conteúdo PEM.
   `ClienteHttpBacen::resolverArquivo()` materializa o PEM via `Support\CertificadoTemporario`
   (arquivo `0600`, removido no `__destruct`) e memoiza o caminho.
