@@ -174,6 +174,119 @@ it('traduz erro do boleto lido da chave "mensagem"', function () {
     }
 });
 
+// --- Alteração de boleto emitido (comandos de instrução) ---
+
+it('altera o vencimento via PATCH data-vencimento', function () {
+    Http::fake(['*/cobranca/boleto/v1/boletos/251006142/data-vencimento' => Http::response([
+        'transactionId' => 'tx-1', 'nossoNumero' => '251006142',
+        'statusComando' => 'MOVIMENTO_ENVIADO', 'tipoMensagem' => 'ALTERA_VENCIMENTO',
+    ])]);
+
+    $instrucao = Bancos::driver('sicredi')->boleto()->alterarVencimento('251006142', '2026-09-30');
+
+    expect($instrucao->enviado())->toBeTrue()
+        ->and($instrucao->tipoMensagem)->toBe('ALTERA_VENCIMENTO')
+        ->and($instrucao->nossoNumero)->toBe('251006142');
+
+    Http::assertSent(fn ($r) => $r->method() === 'PATCH'
+        && str_ends_with($r->url(), '/cobranca/boleto/v1/boletos/251006142/data-vencimento')
+        && $r->data() === ['dataVencimento' => '2026-09-30']);
+});
+
+it('altera desconto expandindo valorDesconto1..3', function () {
+    Http::fake(['*/cobranca/boleto/v1/boletos/*/desconto' => Http::response([
+        'nossoNumero' => '251006142', 'statusComando' => 'MOVIMENTO_ENVIADO',
+    ])]);
+
+    Bancos::driver('sicredi')->boleto()->alterarDesconto('251006142', [10.0, 5.0]);
+
+    Http::assertSent(fn ($r) => $r->method() === 'PATCH'
+        && str_ends_with($r->url(), '/251006142/desconto')
+        && $r->data() === ['valorDesconto1' => 10.0, 'valorDesconto2' => 5.0]);
+});
+
+it('altera data de desconto expandindo data1..3', function () {
+    Http::fake(['*/cobranca/boleto/v1/boletos/*/data-desconto' => Http::response([
+        'nossoNumero' => '251006142', 'statusComando' => 'MOVIMENTO_ENVIADO',
+    ])]);
+
+    Bancos::driver('sicredi')->boleto()->alterarDataDesconto('251006142', ['2026-08-01']);
+
+    Http::assertSent(fn ($r) => $r->method() === 'PATCH'
+        && str_ends_with($r->url(), '/251006142/data-desconto')
+        && $r->data() === ['data1' => '2026-08-01']);
+});
+
+it('altera juros via valorOuPercentual', function () {
+    Http::fake(['*/cobranca/boleto/v1/boletos/*/juros' => Http::response([
+        'nossoNumero' => '251006142', 'statusComando' => 'MOVIMENTO_ENVIADO',
+    ])]);
+
+    Bancos::driver('sicredi')->boleto()->alterarJuros('251006142', '2.50');
+
+    Http::assertSent(fn ($r) => $r->method() === 'PATCH'
+        && str_ends_with($r->url(), '/251006142/juros')
+        && $r->data() === ['valorOuPercentual' => '2.50']);
+});
+
+it('altera o seu número', function () {
+    Http::fake(['*/cobranca/boleto/v1/boletos/*/seu-numero' => Http::response([
+        'nossoNumero' => '251006142', 'statusComando' => 'MOVIMENTO_ENVIADO',
+    ])]);
+
+    Bancos::driver('sicredi')->boleto()->alterarSeuNumero('251006142', 'PEDIDO-99');
+
+    Http::assertSent(fn ($r) => $r->method() === 'PATCH'
+        && str_ends_with($r->url(), '/251006142/seu-numero')
+        && $r->data() === ['seuNumero' => 'PEDIDO-99']);
+});
+
+// --- Listagem: boletos liquidados por dia ---
+
+it('lista boletos liquidados por dia convertendo a data e mapeando itens', function () {
+    Http::fake(['*/cobranca/boleto/v1/boletos/liquidados/dia*' => Http::response([
+        'items' => [
+            [
+                'nossoNumero' => '251006142', 'seuNumero' => 'PEDIDO-42',
+                'dataPagamento' => '2026-07-30', 'valor' => 150.00, 'valorLiquidado' => 148.00,
+                'jurosLiquido' => 0.00, 'descontoLiquido' => 2.00, 'multaLiquida' => 0.00,
+                'tipoLiquidacao' => 'PIX', 'tipoCarteira' => 'CARTEIRA_SIMPLES',
+            ],
+        ],
+        'hasNext' => 'false',
+    ])]);
+
+    $pagina = Bancos::driver('sicredi')->boleto()->listarLiquidados('2026-07-30');
+
+    expect($pagina->temProxima)->toBeFalse()
+        ->and($pagina->pagina)->toBe(1)
+        ->and($pagina->itens)->toHaveCount(1)
+        ->and($pagina->itens[0]->nossoNumero)->toBe('251006142')
+        ->and($pagina->itens[0]->tipoLiquidacao)->toBe('PIX')
+        ->and($pagina->itens[0]->valorLiquidado->paraApi())->toBe('148.00')
+        ->and($pagina->itens[0]->desconto->paraApi())->toBe('2.00');
+
+    // dia canônico YYYY-MM-DD é convertido para DD/MM/YYYY na query.
+    Http::assertSent(fn ($r) => $r->method() === 'GET'
+        && str_contains($r->url(), '/boletos/liquidados/dia')
+        && str_contains(urldecode($r->url()), 'dia=30/07/2026')
+        && str_contains($r->url(), 'codigoBeneficiario=12345')
+        && str_contains($r->url(), 'pagina=1'));
+});
+
+it('encaminha beneficiário final e página na consulta de liquidados', function () {
+    Http::fake(['*/cobranca/boleto/v1/boletos/liquidados/dia*' => Http::response([
+        'items' => [], 'hasNext' => 'true',
+    ])]);
+
+    $pagina = Bancos::driver('sicredi')->boleto()->listarLiquidados('2026-07-30', '12345678000199', 2);
+
+    expect($pagina->temProxima)->toBeTrue()->and($pagina->pagina)->toBe(2);
+
+    Http::assertSent(fn ($r) => str_contains($r->url(), 'cpfCnpjBeneficiarioFinal=12345678000199')
+        && str_contains($r->url(), 'pagina=2'));
+});
+
 // --- Webhook de boleto (contrato) ---
 
 it('registra um contrato de webhook de boleto', function () {

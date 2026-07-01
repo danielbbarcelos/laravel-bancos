@@ -8,6 +8,9 @@ use DanielBBarcelos\Bancos\Data\Boleto\Boleto;
 use DanielBBarcelos\Bancos\Data\Boleto\BoletoEmitido;
 use DanielBBarcelos\Bancos\Data\Boleto\ContratoWebhook;
 use DanielBBarcelos\Bancos\Data\Boleto\Encargo;
+use DanielBBarcelos\Bancos\Data\Boleto\InstrucaoBoleto;
+use DanielBBarcelos\Bancos\Data\Boleto\Liquidacao;
+use DanielBBarcelos\Bancos\Data\Boleto\PaginaLiquidacoes;
 use DanielBBarcelos\Bancos\Data\Boleto\Pessoa;
 use DanielBBarcelos\Bancos\Data\Boleto\RecebimentoBoleto;
 use DanielBBarcelos\Bancos\Data\Shared\Valor;
@@ -110,6 +113,82 @@ class BoletoMapper
             status: $resposta['contratoStatus'] ?? ($resposta['status'] ?? null),
             bruto: $resposta,
         );
+    }
+
+    /**
+     * Resposta de um comando de instrução (alterar vencimento/desconto/juros/
+     * seu número, baixa) -> DTO canônico.
+     *
+     * @param  array<string, mixed>  $resposta
+     */
+    public function instrucaoParaDominio(array $resposta): InstrucaoBoleto
+    {
+        return new InstrucaoBoleto(
+            nossoNumero: (string) ($resposta['nossoNumero'] ?? ''),
+            statusComando: $resposta['statusComando'] ?? null,
+            tipoMensagem: $resposta['tipoMensagem'] ?? null,
+            transactionId: $resposta['transactionId'] ?? null,
+            dataHoraRegistro: $resposta['dataHoraRegistro'] ?? null,
+            bruto: $resposta,
+        );
+    }
+
+    /**
+     * Resposta da consulta de liquidados por dia -> página canônica.
+     *
+     * @param  array<string, mixed>  $resposta
+     */
+    public function paginaLiquidacoesParaDominio(array $resposta, int $pagina): PaginaLiquidacoes
+    {
+        $itens = array_map(
+            fn (array $item): Liquidacao => $this->liquidacaoParaDominio($item),
+            $resposta['items'] ?? [],
+        );
+
+        return new PaginaLiquidacoes(
+            itens: $itens,
+            temProxima: filter_var($resposta['hasNext'] ?? false, FILTER_VALIDATE_BOOLEAN),
+            pagina: $pagina,
+            bruto: $resposta,
+        );
+    }
+
+    /**
+     * Item de liquidação -> DTO canônico.
+     *
+     * @param  array<string, mixed>  $item
+     */
+    public function liquidacaoParaDominio(array $item): Liquidacao
+    {
+        $valor = static fn (string $chave): ?Valor => isset($item[$chave]) && $item[$chave] !== ''
+            ? Valor::reais((string) $item[$chave])
+            : null;
+
+        return new Liquidacao(
+            nossoNumero: (string) ($item['nossoNumero'] ?? ''),
+            seuNumero: $item['seuNumero'] ?? null,
+            dataPagamento: $item['dataPagamento'] ?? null,
+            valor: $valor('valor'),
+            valorLiquidado: $valor('valorLiquidado'),
+            juros: $valor('jurosLiquido'),
+            desconto: $valor('descontoLiquido'),
+            multa: $valor('multaLiquida'),
+            abatimento: $valor('abatimentoLiquido'),
+            tipoLiquidacao: $item['tipoLiquidacao'] ?? null,
+            tipoCarteira: $item['tipoCarteira'] ?? null,
+            cooperativa: $item['cooperativa'] ?? null,
+            bruto: $item,
+        );
+    }
+
+    /** Converte data canônica (YYYY-MM-DD) para o formato DD/MM/YYYY que a consulta de liquidados exige. */
+    public function diaParaConsulta(string $dia): string
+    {
+        if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $dia, $m) === 1) {
+            return "{$m[3]}/{$m[2]}/{$m[1]}";
+        }
+
+        return $dia;
     }
 
     /**

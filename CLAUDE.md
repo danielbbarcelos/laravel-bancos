@@ -64,10 +64,18 @@ Só crie mappers próprios se o banco divergir do payload BACEN; senão, reutili
 - `SicrediBoletoConnector extends ClienteHttpBacen` só para reusar cache de token, retry e erros;
   sobrescreve `emitirToken()` (password grant) e `cliente()` (headers). Token expira em 300s
   (re-emite por password; refresh_token não usado — melhoria futura).
-- `BoletoGateway`: `emitir`/`consultar`/`pdf`/`baixar` + webhook por contrato
+- `BoletoGateway`: `emitir`/`consultar`/`pdf`/`baixar` + **comandos de instrução**
+  (`alterarVencimento`/`alterarDesconto`/`alterarDataDesconto`/`alterarJuros`/`alterarSeuNumero`,
+  cada um um `PATCH /boletos/{nossoNumero}/{comando}` → `Data\Boleto\InstrucaoBoleto`) +
+  **listagem** (`listarLiquidados` → `GET /boletos/liquidados/dia`, paginado 500/pág →
+  `Data\Boleto\PaginaLiquidacoes` de `Liquidacao`; a API do Sicredi **só** lista liquidados por
+  dia, não há "listar todos") + webhook por contrato
   (`registrarWebhook`/`consultarWebhook`/`alterarWebhook`/`processarNotificacao` → evento
   `Events\BoletoLiquidado`). DTOs em `Data\Boleto\*`. Config no bloco `boleto` de
   `bancos.drivers.sicredi`; `SicrediBanco::boleto()` lança `BancoException` se ausente.
+- Comandos de instrução e liquidados fiéis ao **Manual da API da Cobrança 1.2** do Sicredi
+  (paths `/data-vencimento`, `/desconto`, `/data-desconto`, `/juros`, `/seu-numero`;
+  `/liquidados/dia` com `dia` em DD/MM/YYYY — o gateway converte de YYYY-MM-DD canônico).
 - PDF via `ClienteHttpBacen::getRaw()` (Accept custom). Token de boleto é curto (~10 min) →
   `enviar()` re-tenta uma vez em 401 (vale p/ Pix também). Erro lido também de `mensagem` (PT).
 - Endpoints de webhook de boleto seguem o `sicredi_client.py` real do meanify

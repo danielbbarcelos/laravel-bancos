@@ -8,6 +8,8 @@ use DanielBBarcelos\Bancos\Contracts\BoletoGateway;
 use DanielBBarcelos\Bancos\Data\Boleto\Boleto;
 use DanielBBarcelos\Bancos\Data\Boleto\BoletoEmitido;
 use DanielBBarcelos\Bancos\Data\Boleto\ContratoWebhook;
+use DanielBBarcelos\Bancos\Data\Boleto\InstrucaoBoleto;
+use DanielBBarcelos\Bancos\Data\Boleto\PaginaLiquidacoes;
 use DanielBBarcelos\Bancos\Data\Boleto\RecebimentoBoleto;
 use DanielBBarcelos\Bancos\Events\BoletoLiquidado;
 
@@ -66,6 +68,53 @@ class SicrediBoletoGateway implements BoletoGateway
         $this->http->patch(self::ROTA."/{$nossoNumero}/baixa", []);
     }
 
+    public function alterarVencimento(string $nossoNumero, string $vencimento): InstrucaoBoleto
+    {
+        return $this->instruir($nossoNumero, 'data-vencimento', ['dataVencimento' => $vencimento]);
+    }
+
+    public function alterarDesconto(string $nossoNumero, array $valores): InstrucaoBoleto
+    {
+        $corpo = [];
+        foreach (array_slice(array_values($valores), 0, 3) as $i => $valor) {
+            $corpo['valorDesconto'.($i + 1)] = $valor;
+        }
+
+        return $this->instruir($nossoNumero, 'desconto', $corpo);
+    }
+
+    public function alterarDataDesconto(string $nossoNumero, array $datas): InstrucaoBoleto
+    {
+        $corpo = [];
+        foreach (array_slice(array_values($datas), 0, 3) as $i => $data) {
+            $corpo['data'.($i + 1)] = $data;
+        }
+
+        return $this->instruir($nossoNumero, 'data-desconto', $corpo);
+    }
+
+    public function alterarJuros(string $nossoNumero, string $valorOuPercentual): InstrucaoBoleto
+    {
+        return $this->instruir($nossoNumero, 'juros', ['valorOuPercentual' => $valorOuPercentual]);
+    }
+
+    public function alterarSeuNumero(string $nossoNumero, string $seuNumero): InstrucaoBoleto
+    {
+        return $this->instruir($nossoNumero, 'seu-numero', ['seuNumero' => $seuNumero]);
+    }
+
+    public function listarLiquidados(string $dia, ?string $cpfCnpjBeneficiarioFinal = null, int $pagina = 1): PaginaLiquidacoes
+    {
+        $resposta = $this->http->get(self::ROTA.'/liquidados/dia', array_filter([
+            'codigoBeneficiario' => $this->codigoBeneficiario,
+            'dia' => $this->mapper->diaParaConsulta($dia),
+            'cpfCnpjBeneficiarioFinal' => $cpfCnpjBeneficiarioFinal,
+            'pagina' => $pagina,
+        ], fn ($v) => $v !== null && $v !== ''));
+
+        return $this->mapper->paginaLiquidacoesParaDominio($resposta->json() ?? [], $pagina);
+    }
+
     public function registrarWebhook(string $url, array $eventos = ['LIQUIDACAO']): ContratoWebhook
     {
         $resposta = $this->http->post(self::ROTA_WEBHOOK.'/', $this->payloadContrato($url, $eventos));
@@ -108,6 +157,18 @@ class SicrediBoletoGateway implements BoletoGateway
         event(new BoletoLiquidado($this->banco, $recebimento));
 
         return $recebimento;
+    }
+
+    /**
+     * Emite um comando de instrução (PATCH) sobre um boleto emitido.
+     *
+     * @param  array<string, mixed>  $corpo
+     */
+    protected function instruir(string $nossoNumero, string $comando, array $corpo): InstrucaoBoleto
+    {
+        $resposta = $this->http->patch(self::ROTA."/{$nossoNumero}/{$comando}", $corpo);
+
+        return $this->mapper->instrucaoParaDominio($resposta->json() ?? []);
     }
 
     /**
