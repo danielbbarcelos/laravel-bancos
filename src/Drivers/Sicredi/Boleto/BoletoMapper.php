@@ -88,7 +88,8 @@ class BoletoMapper
             codigoBarras: $resposta['codigoBarras'] ?? null,
             cooperativa: $resposta['cooperativa'] ?? null,
             posto: $resposta['posto'] ?? null,
-            txid: $resposta['txid'] ?? null,
+            // Emissão devolve "txid"; consulta devolve "txId" (I maiúsculo).
+            txid: $resposta['txid'] ?? $resposta['txId'] ?? null,
             qrCode: $resposta['qrCode'] ?? $resposta['codigoQrCode'] ?? null,
             situacao: $resposta['situacao'] ?? null,
             vencimento: $resposta['dataVencimento'] ?? null,

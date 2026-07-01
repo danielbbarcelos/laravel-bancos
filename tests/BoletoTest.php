@@ -111,7 +111,7 @@ it('consulta um boleto pelo nossoNumero', function () {
             'situacao' => 'EM CARTEIRA',
             'dataVencimento' => '2026-09-23',
             'valorNominal' => 150.00,
-            'txid' => '7903187896e4032a89c59eb3f232cda',
+            'txId' => '7903187896e4032a89c59eb3f232cda',   // consulta usa "txId" (I maiúsculo)
             'codigoQrCode' => '00020126...',
         ]),
     ]);
@@ -121,6 +121,7 @@ it('consulta um boleto pelo nossoNumero', function () {
     expect($boleto->situacao)->toBe('EM CARTEIRA')
         ->and($boleto->vencimento)->toBe('2026-09-23')
         ->and($boleto->valor->paraApi())->toBe('150.00')
+        ->and($boleto->txid)->toBe('7903187896e4032a89c59eb3f232cda')   // txId mapeado p/ txid
         ->and($boleto->qrCode)->toBe('00020126...');   // codigoQrCode mapeado p/ qrCode
 
     Http::assertSent(fn ($r) => $r->method() === 'GET'
